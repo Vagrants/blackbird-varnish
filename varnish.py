@@ -5,6 +5,9 @@ u"""Parse /proc/net/"protocol" and put Queue"""
 import re
 import subprocess
 import json
+import commands
+import os
+import requests
 
 from blackbird.plugins import base
 
@@ -42,7 +45,7 @@ class ConcreteJob(base.JobBase):
                                        host=self.hostname
                                        ),
                            block=False
-                           )
+                          )
         
         #lld storage
         lld_values = []
@@ -54,6 +57,25 @@ class ConcreteJob(base.JobBase):
                                    ),
                        block=False
                        )
+
+
+        (response  , time) = self._get_response(scheme="http" , host="localhost" , port=80 , uri="/a" , vhost=None,ua=None , ext_headers={})
+        if response is not None:
+            self.queue.put(
+                VarnishItem(
+                    key='response_check,time',
+                    value=time,
+                    host=self.options['hostname']
+                )
+            )
+            self.queue.put(
+                VarnishItem(
+                    key='response_check,status_code',
+                    value=response.status_code,
+                    host=self.options['hostname']
+                )
+            )
+
 
     @staticmethod
     def get_varnishstat():
@@ -75,18 +97,17 @@ class ConcreteJob(base.JobBase):
     @staticmethod
     def get_varnishadm(arg):
         cwd = "/tmp"
-        cmdline = "sudo varnishadm %s| wc -l" % (arg)
-        out , err = subprocess.Popen(cmdline, shell=True, cwd=cwd, stdin=subprocess.PIPE,
-                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                     close_fds=True).communicate()
- 
-        result = out.splitlines()[0]            
+        p1 = subprocess.Popen("varnishadm ban.list" ,shell=True ,  stdout=subprocess.PIPE)
+        p2 = subprocess.Popen("wc -l" , shell=True , stdin=p1.stdout , stdout=subprocess.PIPE)
+        out , err = p2.communicate()
+
+        result = out.splitlines()[0]
         return result
     
     @staticmethod
     def get_storages():
-        cwd = "/"
-        cmdline = "sudo varnishadm storage.list |grep file"
+        cwd = "/tmp"
+        cmdline = "varnishadm storage.list |grep file"
         out , err = subprocess.Popen(cmdline, shell=True, cwd=cwd, stdin=subprocess.PIPE,
                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                      close_fds=True).communicate()      
@@ -95,10 +116,39 @@ class ConcreteJob(base.JobBase):
         lines = out.splitlines()
         for line in lines:
             m = re.search("storage\.(.*) = file", line)
-            result.append(m.group(1))
+            if m is not None: 
+                result.append(m.group(1))
         return result
 
-        
+
+    @staticmethod
+    def _get_response(scheme="http" , host="localhost" , port=80 , uri="/" , vhost=None,ua=None , ext_headers={}):
+        url = (
+            '{scheme}://{host}:{port}{uri}'
+            ''.format(
+                scheme=scheme,
+                host=host,
+                port=port,
+                uri=uri
+            )
+        )
+        headers={}
+        if vhost is not None:
+            headers['Host']=vhost
+        if ua is not None:
+            headers['User-Agent']=ua
+
+        headers.update(ext_headers)
+
+        try:
+            with base.Timer() as timer:
+                response = requests.get(url, headers=headers)
+        except:
+            return (None,0)
+
+        time = timer.sec
+        return (response,0)
+
 class VarnishItem(base.ItemBase):
     u"""Enqueued item. Take an argument as redis.info()."""
 
@@ -147,7 +197,7 @@ class Validator(base.ValidatorBase):
     def spec(self):
         self.__spec = (
             "[{0}]".format(__name__),
-            "hostname = string(default={0})".format(self.gethostname()),
+            "hostname = string(default={0})".format(self.detect_hostname()),
         )
         return self.__spec
 
