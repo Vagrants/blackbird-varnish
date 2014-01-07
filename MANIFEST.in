@@ -1,0 +1,2 @@
+include varnish.py
+include varnish.cfg
