@@ -225,4 +225,4 @@ if __name__ == '__main__':
     }
 
     BBL_VARNISH = ConcreteJob(options=OPTIONS)
-    BBL_VARNISH.build_itemsd()
+    BBL_VARNISH.build_items()
