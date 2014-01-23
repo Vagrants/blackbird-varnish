@@ -29,35 +29,21 @@ class ConcreteJob(base.JobBase):
         u"""This method called by Executer.
         """
 
-        #varnishstat
+        varnishstat
         for stat in self.get_varnishstat():
-            self.queue.put( VarnishItem(key="varnish.varnishstat["  +stat.get("key").replace("." , ",") +"]",
+            self.enqueue( VarnishItem(key="varnish.varnishstat[{0}]".format(stat.get("key").replace("." , ",")),
                                        value=stat.get("value"),
                                        host=self.hostname
-                                       ),
-                           block=False
-                           )
-                           
-
+                                       )
+        
+            )
         #ban.list
-        self.queue.put( VarnishItem(key="varnish.varnishadm[ban.list]",
+        self.enqueue( VarnishItem(key="varnish.varnishadm[ban.list]",
                                        value=self.count_banlist(),
                                        host=self.hostname
-                                       ),
-                           block=False
+                                       )
                           )
         
-        #lld storage
-        lld_values = []
-        for storage in self.get_storages():
-            lld_values.append({"{#STORAGE_NAME}":storage, "{#STORAGE_TYPE}":"file"})
-
-        self.queue.put(VarnishDicoveryItem(
-                                   key="varnish.storage.LLD" , value={'data' : lld_values} , host=self.hostname
-                                   ),
-                       block=False
-                       )
-
         host = self.options.get('response_check_host')
         port = self.options.get('response_check_port')
         uri = self.options.get('response_check_uri')
@@ -68,20 +54,33 @@ class ConcreteJob(base.JobBase):
         ext_headers={}
         (response  , time) = self._get_response(scheme=scheme , host=host , port=port , uri=uri , vhost=vhost,ua=ua , ext_headers=ext_headers)
         if response is not None:
-            self.queue.put(
+            self.enqueue(
                 VarnishItem(
                     key='response_check,time',
                     value=time,
                     host=self.options['hostname'],
                 )
             )
-            self.queue.put(
+            self.enqueue(
                 VarnishItem(
                     key='response_check,status_code',
                     value=response.status_code,
                     host=self.options['hostname']
                 )
             )
+
+
+    def build_discovery_items(self):
+        #lld storage
+        lld_values = []
+        for storage in self.get_storages():
+            lld_values.append({"{#STORAGE_NAME}":storage, "{#STORAGE_TYPE}":"file"})
+
+        self.enqueue(VarnishDicoveryItem(
+                                   key="varnish.storage.LLD" , value={'data' : lld_values} , host=self.hostname
+                                   )
+                       )
+
 
 
     @staticmethod
@@ -220,8 +219,6 @@ class Validator(base.ValidatorBase):
 
 if __name__ == '__main__':
     OPTIONS = {
-            'stats_socket': '/var/lib/haproxy/stats',
-            'hostname': 'hogehoge.com'
     }
 
     BBL_VARNISH = ConcreteJob(options=OPTIONS)
