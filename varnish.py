@@ -5,6 +5,8 @@ u"""get various information about varnish"""
 import re
 import subprocess
 import json
+import commands
+import os
 import requests
 
 from blackbird.plugins import base
@@ -29,26 +31,46 @@ class ConcreteJob(base.JobBase):
 
         #varnishstat
         for stat in self.get_varnishstat():
-            self.queue.put(
+            self.enqueue( VarnishItem(key="varnish.varnishstat[{0}]".format(stat.get("key").replace("." , ",")),
+                                       value=stat.get("value"),
+                                       host=self.hostname
+                                       )
+        
+            )
+        #ban.list
+        self.enqueue( VarnishItem(key="varnish.varnishadm[ban.list]",
+                                       value=self.count_banlist(),
+                                       host=self.hostname
+                                       )
+                          )
+        
+        host = self.options.get('response_check_host')
+        port = self.options.get('response_check_port')
+        uri = self.options.get('response_check_uri')
+        vhost = self.options.get('response_check_vhost') or self.options.get('response_check_host')
+        host = self.options.get('response_check_host')
+        ua = self.options.get('response_check_uagent')
+        scheme = 'https' if self.options.get('response_check_ssl') else 'http'
+        ext_headers={}
+        (response  , time) = self._get_response(scheme=scheme , host=host , port=port , uri=uri , vhost=vhost,ua=ua , ext_headers=ext_headers)
+        if response is not None:
+            self.enqueue(
                 VarnishItem(
-                    key="varnish.varnishstat["
-                    + stat.get("key").replace(".", ",")
-                    + "]",
-                    value=stat.get("value"),
-                    host=self.hostname
-                ),
-                block=False
+                    key='response_check,time',
+                    value=time,
+                    host=self.options['hostname'],
+                )
+            )
+            self.enqueue(
+                VarnishItem(
+                    key='response_check,status_code',
+                    value=response.status_code,
+                    host=self.options['hostname']
+                )
             )
 
-        #ban.list
-        self.queue.put(
-            VarnishItem(
-                key="varnish.varnishadm[ban.list]",
-                value=self.count_banlist(),
-                host=self.hostname
-            ),
-            block=False
-        )
+
+    def build_discovery_items(self):
         #lld storage
         lld_values = []
         for storage in self.get_storages():
@@ -61,35 +83,10 @@ class ConcreteJob(base.JobBase):
             block=False
         )
 
-        host = self.options.get('response_check_host')
-        port = self.options.get('response_check_port')
-        uri = self.options.get('response_check_uri')
-        vhost = self.options.get('response_check_vhost') or self.options.get('response_check_host')
-        host = self.options.get('response_check_host')
-        ua = self.options.get('response_check_uagent')
-        scheme = 'https' if self.options.get('response_check_ssl') else 'http'
-        ext_headers = {}
-        (response, time) = self._get_response(scheme=scheme,
-                                              host=host,
-                                              port=port, uri=uri,
-                                              vhost=vhost,
-                                              ua=ua,
-                                              ext_headers=ext_headers)
-        if response is not None:
-            self.queue.put(
-                VarnishItem(
-                    key='response_check,time',
-                    value=time,
-                    host=self.options['hostname'],
-                )
-            )
-            self.queue.put(
-                VarnishItem(
-                    key='response_check,status_code',
-                    value=response.status_code,
-                    host=self.options['hostname']
-                )
-            )
+        self.enqueue(VarnishDicoveryItem(
+                                   key="varnish.storage.LLD" , value={'data' : lld_values} , host=self.hostname
+                                   )
+                       )
 
     @staticmethod
     def get_varnishstat():
@@ -111,9 +108,10 @@ class ConcreteJob(base.JobBase):
     @staticmethod
     def count_banlist():
         u"""count ban.list from varnishadm"""
-        p1 = subprocess.Popen("varnishadm ban.list", shell=True, stdout=subprocess.PIPE)
-        p2 = subprocess.Popen("wc -l", shell=True, stdin=p1.stdout, stdout=subprocess.PIPE)
-        out, err = p2.communicate()
+        cwd = "/tmp"
+        p1 = subprocess.Popen("varnishadm ban.list" ,shell=True ,  stdout=subprocess.PIPE)
+        p2 = subprocess.Popen("wc -l" , shell=True , stdin=p1.stdout , stdout=subprocess.PIPE)
+        out , err = p2.communicate()
 
         result = out.splitlines()[0]
         return result
@@ -123,20 +121,21 @@ class ConcreteJob(base.JobBase):
         u"""get storage information"""
         cwd = "/tmp"
         cmdline = "varnishadm storage.list |grep file"
-        out, err = subprocess.Popen(cmdline, shell=True,
-                                    cwd=cwd, stdin=subprocess.PIPE,
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    close_fds=True).communicate()
+        out , err = subprocess.Popen(cmdline, shell=True, cwd=cwd, stdin=subprocess.PIPE,
+                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                     close_fds=True).communicate()      
+         
         result = []
         lines = out.splitlines()
         for line in lines:
             m = re.search("storage\.(.*) = file", line)
-            if m is not None:
+            if m is not None: 
                 result.append(m.group(1))
         return result
 
+
     @staticmethod
-    def _get_response(scheme="http", host="localhost", port=80, uri="/", vhost=None, ua=None, ext_headers={}):
+    def _get_response(scheme="http" , host="localhost" , port=80 , uri="/" , vhost=None,ua=None , ext_headers={}):
         u"""get response and measure latency"""
         url = (
             '{scheme}://{host}:{port}{uri}'
@@ -147,11 +146,11 @@ class ConcreteJob(base.JobBase):
                 uri=uri
             )
         )
-        headers = {}
+        headers={}
         if vhost is not None:
-            headers['Host'] = vhost
+            headers['Host']=vhost
         if ua is not None:
-            headers['User-Agent'] = ua
+            headers['User-Agent']=ua
 
         headers.update(ext_headers)
 
@@ -159,11 +158,10 @@ class ConcreteJob(base.JobBase):
             with base.Timer() as timer:
                 response = requests.get(url, headers=headers)
         except:
-            return (None, 0)
+            return (None,0)
 
         time = timer.sec
-        return (response, time)
-
+        return (response,time)
 
 class VarnishItem(base.ItemBase):
     u"""."""
@@ -212,23 +210,21 @@ class Validator(base.ValidatorBase):
 
     @property
     def spec(self):
-        self.__spec = (
-            "[{0}]".format(__name__),
-            "response_check_host = string(default='127.0.0.1')",
-            "response_check_port = integer(0, 65535, default=80)",
-            "response_check_timeout = integer(0, 600, default=3)",
-            "response_check_vhost = string(default='localhost')",
-            "response_check_uagent = string(default='blackbird response check')",
-            "response_check_ssl = boolean(default=False)",
-            "hostname = string(default={0})".format(self.detect_hostname()),
-        )
-        return self.__spec
+       self.__spec = (
+         "[{0}]".format(__name__),
+         "response_check_host = string(default='127.0.0.1')",
+         "response_check_port = integer(0, 65535, default=80)",
+         "response_check_timeout = integer(0, 600, default=3)",
+         "response_check_vhost = string(default='localhost')",
+         "response_check_uagent = string(default='blackbird response check')",
+         "response_check_ssl = boolean(default=False)",
+         "hostname = string(default={0})".format(self.detect_hostname()),
+       ) 
+       return self.__spec
 
 if __name__ == '__main__':
     OPTIONS = {
-        'stats_socket': '/var/lib/haproxy/stats',
-        'hostname': 'hogehoge.com'
     }
 
     BBL_VARNISH = ConcreteJob(options=OPTIONS)
-    BBL_VARNISH.build_itemsd()
+    BBL_VARNISH.build_items()
