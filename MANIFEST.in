@@ -1,2 +1,6 @@
 include varnish.py
 include varnish.cfg
+include LICENSE.txt
+include README.md
+include CHANGELOG.md
+include PROJECT.txt

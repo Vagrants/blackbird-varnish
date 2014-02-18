@@ -8,11 +8,15 @@ except ImportError:
 
 setup(
     name='blackbird-varnish',
-    version='0.0.1',
+    version='0.1.0',
     description=(
         'get various information about varnish.'
     ),
-    author='hoge',
-    author_email='hoge@example.com',
+    author='makocchi',
+    author_email='makocchi@gmail.com',
     url='https://github.com/Vagrants/blackbird-varnish',
+    data_files=[
+        ('/opt/blackbird/plugins', ['varnish.py']),
+        ('/etc/blackbird/conf.d', ['varnish.cfg'])
+    ],
 )
