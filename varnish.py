@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 u"""get various information about varnish"""
 
+__VERSION__ = '0.1.0'
+
 import re
 import subprocess
 import json
-import commands
-import os
 import requests
 
 from blackbird.plugins import base
@@ -29,9 +29,15 @@ class ConcreteJob(base.JobBase):
         u"""This method called by Executer.
         """
 
+        # ping item
+        self._ping()
+
+        # detect varnish version
+        self._get_version()
+
         #varnishstat
         for stat in self.get_varnishstat():
-            self.enqueue( VarnishItem(key="varnish.varnishstat[{0}]".format(stat.get("key").replace("." , ",")),
+            self.enqueue( VarnishItem(key='varnish.varnishstat[{0}]'.format(stat.get('key').replace('.', ',')),
                                        value=stat.get("value"),
                                        host=self.hostname
                                        )
@@ -51,19 +57,20 @@ class ConcreteJob(base.JobBase):
         host = self.options.get('response_check_host')
         ua = self.options.get('response_check_uagent')
         scheme = 'https' if self.options.get('response_check_ssl') else 'http'
-        ext_headers={}
-        (response  , time) = self._get_response(scheme=scheme , host=host , port=port , uri=uri , vhost=vhost,ua=ua , ext_headers=ext_headers)
+        ext_headers = {}
+        (response, time) = self._get_response(scheme=scheme, host=host, port=port,
+                                              uri=uri, vhost=vhost, ua=ua, ext_headers=ext_headers)
         if response is not None:
             self.enqueue(
                 VarnishItem(
-                    key='response_check,time',
+                    key='varnish.stat[response_check,time]',
                     value=time,
                     host=self.options['hostname'],
                 )
             )
             self.enqueue(
                 VarnishItem(
-                    key='response_check,status_code',
+                    key='varnish.stat[response_check,status_code]',
                     value=response.status_code,
                     host=self.options['hostname']
                 )
@@ -88,6 +95,58 @@ class ConcreteJob(base.JobBase):
                                    )
                        )
 
+    def _ping(self):
+        """
+        send ping item
+        """
+
+        self.enqueue(
+            VarnishItem(
+                key='blackbird.varnish.ping',
+                value=1,
+                host=self.options['hostname']
+            )
+        )
+
+        self.enqueue(
+            VarnishItem(
+                key='blackbird.varnish.version',
+                value=__VERSION__,
+                host=self.options['hostname']
+            )
+        )
+
+    def _get_version(self):
+        """
+        detect varnish version
+
+        $ varnishd -V
+        varnishd (varnish-N.N.N revision ....)
+        Copyright (c) ....
+        """
+
+        varnish_version = 'Unknown'
+        try:
+            output = subprocess.Popen([self.options['path'], '-V'],
+                                     stderr=subprocess.PIPE).communicate()[1]
+            match = re.match(r"varnishd \(varnish-(\S+) ", output)
+            if match:
+                varnish_version = match.group(1)
+
+        except OSError:
+            self.logger.debug(
+                'can not exec "{0} -V", failed to get varnish version'
+                ''.format(self.options['path'])
+            )
+
+        self.enqueue(
+            VarnishItem(
+                key='varnish.version',
+                value=varnish_version,
+                host=self.options['hostname']
+            )
+        )
+
     @staticmethod
     def get_varnishstat():
         u"""get stat from varnishstat"""
@@ -109,9 +168,9 @@ class ConcreteJob(base.JobBase):
     def count_banlist():
         u"""count ban.list from varnishadm"""
         cwd = "/tmp"
-        p1 = subprocess.Popen("varnishadm ban.list" ,shell=True ,  stdout=subprocess.PIPE)
-        p2 = subprocess.Popen("wc -l" , shell=True , stdin=p1.stdout , stdout=subprocess.PIPE)
-        out , err = p2.communicate()
+        p1 = subprocess.Popen("varnishadm ban.list", shell=True, cwd=cwd, stdout=subprocess.PIPE)
+        p2 = subprocess.Popen("wc -l", shell=True, stdin=p1.stdout, stdout=subprocess.PIPE)
+        out, err = p2.communicate()
 
         result = out.splitlines()[0]
         return result
@@ -135,7 +194,7 @@ class ConcreteJob(base.JobBase):
 
 
     @staticmethod
-    def _get_response(scheme="http" , host="localhost" , port=80 , uri="/" , vhost=None,ua=None , ext_headers={}):
+    def _get_response(scheme="http", host="localhost", port=80, uri="/", vhost=None, ua=None, ext_headers={}):
         u"""get response and measure latency"""
         url = (
             '{scheme}://{host}:{port}{uri}'
@@ -146,11 +205,11 @@ class ConcreteJob(base.JobBase):
                 uri=uri
             )
         )
-        headers={}
+        headers = {}
         if vhost is not None:
-            headers['Host']=vhost
+            headers['Host'] = vhost
         if ua is not None:
-            headers['User-Agent']=ua
+            headers['User-Agent'] = ua
 
         headers.update(ext_headers)
 
@@ -158,10 +217,10 @@ class ConcreteJob(base.JobBase):
             with base.Timer() as timer:
                 response = requests.get(url, headers=headers)
         except:
-            return (None,0)
+            return (None, 0)
 
         time = timer.sec
-        return (response,time)
+        return (response, time)
 
 class VarnishItem(base.ItemBase):
     u"""."""
@@ -210,17 +269,18 @@ class Validator(base.ValidatorBase):
 
     @property
     def spec(self):
-       self.__spec = (
-         "[{0}]".format(__name__),
-         "response_check_host = string(default='127.0.0.1')",
-         "response_check_port = integer(0, 65535, default=80)",
-         "response_check_timeout = integer(0, 600, default=3)",
-         "response_check_vhost = string(default='localhost')",
-         "response_check_uagent = string(default='blackbird response check')",
-         "response_check_ssl = boolean(default=False)",
-         "hostname = string(default={0})".format(self.detect_hostname()),
-       ) 
-       return self.__spec
+        self.__spec = (
+            "[{0}]".format(__name__),
+            "response_check_host = string(default='127.0.0.1')",
+            "response_check_port = integer(0, 65535, default=80)",
+            "response_check_timeout = integer(0, 600, default=3)",
+            "response_check_vhost = string(default='localhost')",
+            "response_check_uagent = string(default='blackbird response check')",
+            "response_check_ssl = boolean(default=False)",
+            "path = string(default='/usr/sbin/varnishd')",
+            "hostname = string(default={0})".format(self.detect_hostname()),
+        )
+        return self.__spec
 
 if __name__ == '__main__':
     OPTIONS = {
