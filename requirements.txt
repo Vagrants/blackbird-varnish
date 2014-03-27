@@ -1,1 +1,2 @@
+-e git+https://github.com/Vagrants/blackbird.git#egg=blackbird
 requests

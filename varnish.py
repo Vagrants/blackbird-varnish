@@ -35,65 +35,69 @@ class ConcreteJob(base.JobBase):
         # detect varnish version
         self._get_version()
 
-        #varnishstat
+        # varnishstat
         for stat in self.get_varnishstat():
-            self.enqueue( VarnishItem(key='varnish.varnishstat[{0}]'.format(stat.get('key').replace('.', ',')),
-                                       value=stat.get("value"),
-                                       host=self.hostname
-                                       )
-        
-            )
-        #ban.list
-        self.enqueue( VarnishItem(key="varnish.varnishadm[ban.list]",
-                                       value=self.count_banlist(),
-                                       host=self.hostname
-                                       )
-                          )
-        
+            self.enqueue(VarnishItem(
+                key='varnish.varnishstat[{0}]'.format(
+                    stat.get('key').replace('.', ',')
+                ),
+                value=stat.get("value"),
+                host=self.hostname,
+            ))
+
+        # ban.list
+        self.enqueue(VarnishItem(
+            key="varnish.varnishadm[ban.list]",
+            value=self.count_banlist(),
+            host=self.hostname,
+        ))
+
         host = self.options.get('response_check_host')
         port = self.options.get('response_check_port')
         uri = self.options.get('response_check_uri')
-        vhost = self.options.get('response_check_vhost') or self.options.get('response_check_host')
+        vhost = (
+            self.options.get('response_check_vhost')
+            or
+            self.options.get('response_check_host')
+        )
         host = self.options.get('response_check_host')
-        ua = self.options.get('response_check_uagent')
+        user_agent = self.options.get('response_check_uagent')
         scheme = 'https' if self.options.get('response_check_ssl') else 'http'
         ext_headers = {}
-        (response, time) = self._get_response(scheme=scheme, host=host, port=port,
-                                              uri=uri, vhost=vhost, ua=ua, ext_headers=ext_headers)
-        if response is not None:
-            self.enqueue(
-                VarnishItem(
-                    key='varnish.stat[response_check,time]',
-                    value=time,
-                    host=self.options['hostname'],
-                )
-            )
-            self.enqueue(
-                VarnishItem(
-                    key='varnish.stat[response_check,status_code]',
-                    value=response.status_code,
-                    host=self.options['hostname']
-                )
-            )
 
+        try:
+            (response, time) = self._get_response(
+                scheme=scheme, host=host, port=port, uri=uri,
+                vhost=vhost, user_agent=user_agent, ext_headers=ext_headers,
+            )
+        except requests.exceptions.RequestException as exception:
+            self.logger.debug(exception)
+        else:
+            self.enqueue(VarnishItem(
+                key='varnish.stat[response_check,time]',
+                value=time,
+                host=self.options['hostname'],
+            ))
+            self.enqueue(VarnishItem(
+                key='varnish.stat[response_check,status_code]',
+                value=response.status_code,
+                host=self.options['hostname'],
+            ))
 
     def build_discovery_items(self):
-        #lld storage
+        # lld storage
         lld_values = []
         for storage in self.get_storages():
-            lld_values.append({"{#STORAGE_NAME}": storage, "{#STORAGE_TYPE}": "file"})
-
-        self.queue.put(
-            VarnishDicoveryItem(
-                key="varnish.storage.LLD", value={'data': lld_values}, host=self.hostname
-            ),
-            block=False
-        )
+            lld_values.append({
+                "{#STORAGE_NAME}": storage,
+                "{#STORAGE_TYPE}": "file",
+            })
 
         self.enqueue(VarnishDicoveryItem(
-                                   key="varnish.storage.LLD" , value={'data' : lld_values} , host=self.hostname
-                                   )
-                       )
+            key="varnish.storage.LLD",
+            value={'data': lld_values},
+            host=self.hostname,
+        ))
 
     def _ping(self):
         """
@@ -128,7 +132,7 @@ class ConcreteJob(base.JobBase):
         varnish_version = 'Unknown'
         try:
             output = subprocess.Popen([self.options['path'], '-V'],
-                                     stderr=subprocess.PIPE).communicate()[1]
+                                      stderr=subprocess.PIPE).communicate()[1]
             match = re.match(r"varnishd \(varnish-(\S+) ", output)
             if match:
                 varnish_version = match.group(1)
@@ -152,9 +156,10 @@ class ConcreteJob(base.JobBase):
         u"""get stat from varnishstat"""
         cwd = "/tmp"
         cmdline = "varnishstat -1"
-        out, err = subprocess.Popen(cmdline, shell=True, cwd=cwd, stdin=subprocess.PIPE,
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    close_fds=True).communicate()
+        out, _ = subprocess.Popen(
+            cmdline, shell=True, cwd=cwd, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True,
+        ).communicate()
         result = []
         lines = out.splitlines()
 
@@ -168,9 +173,13 @@ class ConcreteJob(base.JobBase):
     def count_banlist():
         u"""count ban.list from varnishadm"""
         cwd = "/tmp"
-        p1 = subprocess.Popen("varnishadm ban.list", shell=True, cwd=cwd, stdout=subprocess.PIPE)
-        p2 = subprocess.Popen("wc -l", shell=True, stdin=p1.stdout, stdout=subprocess.PIPE)
-        out, err = p2.communicate()
+        vadm = subprocess.Popen(
+            "varnishadm ban.list", shell=True, cwd=cwd, stdout=subprocess.PIPE,
+        )
+        wcl = subprocess.Popen(
+            "wc -l", shell=True, stdin=vadm.stdout, stdout=subprocess.PIPE,
+        )
+        out, _ = wcl.communicate()
 
         result = out.splitlines()[0]
         return result
@@ -180,22 +189,26 @@ class ConcreteJob(base.JobBase):
         u"""get storage information"""
         cwd = "/tmp"
         cmdline = "varnishadm storage.list |grep file"
-        out , err = subprocess.Popen(cmdline, shell=True, cwd=cwd, stdin=subprocess.PIPE,
-                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                     close_fds=True).communicate()      
-         
+        out, _ = subprocess.Popen(
+            cmdline, shell=True, cwd=cwd, stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True,
+        ).communicate()
+
         result = []
         lines = out.splitlines()
         for line in lines:
-            m = re.search("storage\.(.*) = file", line)
-            if m is not None: 
-                result.append(m.group(1))
+            match = re.search(r"storage\.(.*) = file", line)
+            if match:
+                result.append(match.group(1))
         return result
 
-
     @staticmethod
-    def _get_response(scheme="http", host="localhost", port=80, uri="/", vhost=None, ua=None, ext_headers={}):
+    def _get_response(scheme="http", host="localhost", port=80,
+                      uri="/", vhost=None, user_agent=None, ext_headers=None):
         u"""get response and measure latency"""
+        if not ext_headers:
+            ext_headers = {}
+
         url = (
             '{scheme}://{host}:{port}{uri}'
             ''.format(
@@ -208,19 +221,17 @@ class ConcreteJob(base.JobBase):
         headers = {}
         if vhost is not None:
             headers['Host'] = vhost
-        if ua is not None:
-            headers['User-Agent'] = ua
+        if user_agent is not None:
+            headers['User-Agent'] = user_agent
 
         headers.update(ext_headers)
 
-        try:
-            with base.Timer() as timer:
-                response = requests.get(url, headers=headers)
-        except:
-            return (None, 0)
+        with base.Timer() as timer:
+            response = requests.get(url, headers=headers)
 
         time = timer.sec
         return (response, time)
+
 
 class VarnishItem(base.ItemBase):
     u"""."""
